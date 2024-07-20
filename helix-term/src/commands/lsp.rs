@@ -1432,11 +1432,6 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
     else {
         return;
     };
-    // Specialization does not say whether it is possible to have both types of diagnostics.
-    // Assume we should prefer PublishDiagnostic if possible
-    if language_server.publish_diagnostic() {
-        return;
-    }
 
     let future = language_server
         .text_document_diagnostic(doc.identifier(), doc.previous_diagnostic_id.clone());

@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{
-    atomic::{self, AtomicBool, AtomicU64, Ordering},
+    atomic::{AtomicU64, Ordering},
     Arc,
 };
 use std::{collections::HashMap, path::PathBuf};
@@ -60,7 +60,6 @@ pub struct Client {
     initialize_notify: Arc<Notify>,
     /// workspace folders added while the server is still initializing
     req_timeout: u64,
-    supports_publish_diagnostic: AtomicBool,
 }
 
 impl Client {
@@ -148,17 +147,6 @@ impl Client {
         }
     }
 
-    pub fn set_publish_diagnostic(&self, val: bool) {
-        self.supports_publish_diagnostic
-            .fetch_or(val, atomic::Ordering::Relaxed);
-    }
-
-    /// Whether the server supports Publish Diagnostic
-    pub fn publish_diagnostic(&self) -> bool {
-        self.supports_publish_diagnostic
-            .load(atomic::Ordering::Relaxed)
-    }
-
     fn add_workspace_folder(
         &self,
         root_uri: Option<lsp::Url>,
@@ -244,7 +232,6 @@ impl Client {
             root_uri,
             workspace_folders: Mutex::new(workspace_folders),
             initialize_notify: initialize_notify.clone(),
-            supports_publish_diagnostic: AtomicBool::new(false),
         };
 
         Ok((client, server_rx, initialize_notify))
