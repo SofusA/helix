@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::{
-    atomic::{AtomicU64, Ordering},
+    atomic::{self, AtomicBool, AtomicU64, Ordering},
     Arc,
 };
 use std::{collections::HashMap, path::PathBuf};
@@ -60,6 +60,7 @@ pub struct Client {
     initialize_notify: Arc<Notify>,
     /// workspace folders added while the server is still initializing
     req_timeout: u64,
+    supports_publish_diagnostic: AtomicBool,
 }
 
 impl Client {
@@ -147,6 +148,17 @@ impl Client {
         }
     }
 
+    pub fn set_publish_diagnostic(&self, val: bool) {
+        self.supports_publish_diagnostic
+            .fetch_or(val, atomic::Ordering::Relaxed);
+    }
+
+    /// Whether the server supports Publish Diagnostic
+    pub fn publish_diagnostic(&self) -> bool {
+        self.supports_publish_diagnostic
+            .load(atomic::Ordering::Relaxed)
+    }
+
     fn add_workspace_folder(
         &self,
         root_uri: Option<lsp::Url>,
@@ -232,6 +244,7 @@ impl Client {
             root_uri,
             workspace_folders: Mutex::new(workspace_folders),
             initialize_notify: initialize_notify.clone(),
+            supports_publish_diagnostic: AtomicBool::new(false),
         };
 
         Ok((client, server_rx, initialize_notify))
@@ -346,6 +359,7 @@ impl Client {
                 Some(OneOf::Left(true) | OneOf::Right(_))
             ),
             LanguageServerFeature::Diagnostics => true, // there's no extra server capability
+            LanguageServerFeature::PullDiagnostics => capabilities.diagnostic_provider.is_some(),
             LanguageServerFeature::RenameSymbol => matches!(
                 capabilities.rename_provider,
                 Some(OneOf::Left(true)) | Some(OneOf::Right(_))
@@ -647,6 +661,10 @@ impl Client {
                             properties: vec!["edit".to_owned(), "command".to_owned()],
                         }),
                         ..Default::default()
+                    }),
+                    diagnostic: Some(lsp::DiagnosticClientCapabilities {
+                        dynamic_registration: Some(false),
+                        related_document_support: Some(true),
                     }),
                     publish_diagnostics: Some(lsp::PublishDiagnosticsClientCapabilities {
                         version_support: Some(true),
@@ -1222,6 +1240,32 @@ impl Client {
             let response: Option<Vec<lsp::TextEdit>> = serde_json::from_value(json)?;
             Ok(response.unwrap_or_default())
         })
+    }
+
+    pub fn text_document_diagnostic(
+        &self,
+        text_document: lsp::TextDocumentIdentifier,
+        previous_result_id: Option<String>,
+    ) -> Option<impl Future<Output = Result<Value>>> {
+        let capabilities = self.capabilities.get().unwrap();
+
+        // Return early if the server does not support pull diagnostic.
+        let identifier = match capabilities.diagnostic_provider.as_ref()? {
+            lsp::DiagnosticServerCapabilities::Options(cap) => cap.identifier.clone(),
+            lsp::DiagnosticServerCapabilities::RegistrationOptions(cap) => {
+                cap.diagnostic_options.identifier.clone()
+            }
+        };
+
+        let params = lsp::DocumentDiagnosticParams {
+            text_document,
+            identifier,
+            previous_result_id,
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        };
+
+        Some(self.call::<lsp::request::DocumentDiagnosticRequest>(params))
     }
 
     pub fn text_document_document_highlight(
