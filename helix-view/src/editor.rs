@@ -25,7 +25,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use std::{
     borrow::Cow,
     cell::Cell,
-    collections::{btree_map::Entry, BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fs,
     io::{self, stdin},
     num::NonZeroUsize,
@@ -1932,31 +1932,6 @@ impl Editor {
     pub fn document_by_path_mut<P: AsRef<Path>>(&mut self, path: P) -> Option<&mut Document> {
         self.documents_mut()
             .find(|doc| doc.path().map(|p| p == path.as_ref()).unwrap_or(false))
-    }
-
-    pub fn add_diagnostics(
-        &mut self,
-        diagnostics: Vec<lsp::Diagnostic>,
-        path: lsp::Url,
-        server_id: LanguageServerId,
-    ) {
-        let mut diagnostics = diagnostics.into_iter().map(|d| (d, server_id)).collect();
-        let uri = helix_core::Uri::try_from(path).unwrap();
-        match self.diagnostics.entry(uri) {
-            Entry::Occupied(o) => {
-                let current_diagnostics = o.into_mut();
-                // there may entries of other language servers, which is why we can't overwrite the whole entry
-                current_diagnostics.retain(|(_, lsp_id)| *lsp_id != server_id);
-                current_diagnostics.append(&mut diagnostics);
-                // Sort diagnostics first by severity and then by line numbers.
-                // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
-                current_diagnostics.sort_unstable_by_key(|(d, _)| (d.severity, d.range.start));
-            }
-            Entry::Vacant(v) => {
-                diagnostics.sort_unstable_by_key(|(d, _)| (d.severity, d.range.start));
-                v.insert(diagnostics);
-            }
-        };
     }
 
     /// Returns all supported diagnostics for the document
