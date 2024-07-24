@@ -2,8 +2,8 @@ use futures_util::{stream::FuturesOrdered, FutureExt};
 use helix_lsp::{
     block_on,
     lsp::{
-        self, CodeAction, CodeActionOrCommand, CodeActionTriggerKind, DiagnosticSeverity,
-        NumberOrString,
+        self, CodeAction, CodeActionOrCommand, CodeActionTriggerKind, Diagnostic,
+        DiagnosticSeverity, NumberOrString,
     },
     util::{diagnostic_to_lsp_diagnostic, lsp_range_to_range, range_to_lsp_range},
     Client, LanguageServerId, OffsetEncoding,
@@ -26,6 +26,7 @@ use helix_view::{
 };
 
 use crate::{
+    application::get_unchanged_diagnostic_sources,
     compositor::{self, Compositor},
     job::Callback,
     ui::{self, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
@@ -36,7 +37,7 @@ use std::{
     collections::{btree_map::Entry, BTreeMap, HashMap, HashSet},
     fmt::Write,
     future::Future,
-    path::Path,
+    path::{Path, PathBuf},
 };
 
 /// Gets the first language server that is attached to a document which supports a specific feature.
@@ -1459,17 +1460,25 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
             let server_id = language_server.id();
 
             let parse_diagnostic = |editor: &mut Editor,
-                                    path,
+                                    path: PathBuf,
                                     report: Vec<lsp::Diagnostic>,
                                     result_id: Option<String>| {
+                // TODO: No clone and no unwrap
+                let uri = helix_core::Uri::try_from(path.clone()).unwrap();
+                let mut diagnostics: Vec<(Diagnostic, LanguageServerId)> =
+                    report.into_iter().map(|d| (d, server_id)).collect();
+
+                // TODO: Not clone?
+                let old_diagnostics = editor.diagnostics.get(&uri).cloned();
+
                 if let Some(doc) = editor.document_by_path_mut(&path) {
-                    let diagnostics: Vec<helix_core::Diagnostic> = report
+                    let new_diagnostics: Vec<helix_core::Diagnostic> = diagnostics
                         .iter()
                         .map(|d| {
                             Document::lsp_diagnostic_to_diagnostic(
                                 doc.text(),
                                 doc.language_config(),
-                                d,
+                                &d.0,
                                 server_id,
                                 offset_encoding,
                             )
@@ -1478,13 +1487,25 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
                         .collect();
 
                     doc.previous_diagnostic_id = result_id;
-                    // TODO: Should i get unchanged_sources?
-                    doc.replace_diagnostics(diagnostics, &[], Some(server_id));
+
+                    let mut unchanged_diag_sources = Vec::new();
+                    if let Some(old_diagnostics) = old_diagnostics {
+                        unchanged_diag_sources = get_unchanged_diagnostic_sources(
+                            doc,
+                            &diagnostics,
+                            &old_diagnostics,
+                            server_id,
+                        );
+                    }
+
+                    doc.replace_diagnostics(
+                        new_diagnostics,
+                        &unchanged_diag_sources,
+                        Some(server_id),
+                    );
                 }
-                let uri = helix_core::Uri::try_from(path).unwrap();
 
                 // TODO: Maybe share code with application.rs:802
-                let mut diagnostics = report.into_iter().map(|d| (d, server_id)).collect();
                 match editor.diagnostics.entry(uri) {
                     Entry::Occupied(o) => {
                         let current_diagnostics = o.into_mut();
