@@ -1463,12 +1463,10 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
                                     path: PathBuf,
                                     report: Vec<lsp::Diagnostic>,
                                     result_id: Option<String>| {
-                // TODO: No clone and no unwrap
                 let uri = helix_core::Uri::try_from(path.clone()).unwrap();
                 let mut diagnostics: Vec<(Diagnostic, LanguageServerId)> =
                     report.into_iter().map(|d| (d, server_id)).collect();
 
-                // TODO: Not clone?
                 let old_diagnostics = editor.diagnostics.get(&uri).cloned();
 
                 if let Some(doc) = editor.document_by_path_mut(&path) {
