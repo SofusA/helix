@@ -761,7 +761,7 @@ impl Application {
                                 true
                             });
 
-                        let diagnostics = params
+                        let diagnostics: Vec<(lsp::Diagnostic, LanguageServerId)> = params
                             .diagnostics
                             .into_iter()
                             .map(|d| (d, server_id))
@@ -1241,8 +1241,8 @@ impl Application {
 
 pub fn get_unchanged_diagnostic_sources(
     doc: &Document,
-    diagnostics: &Vec<(lsp::Diagnostic, LanguageServerId)>,
-    old_diagnostics: &Vec<(lsp::Diagnostic, LanguageServerId)>,
+    diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
+    old_diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
     server_id: LanguageServerId,
 ) -> Vec<String> {
     let mut unchanged_diag_sources = Vec::new();
