@@ -26,7 +26,6 @@ use helix_view::{
 };
 
 use crate::{
-    application::get_unchanged_diagnostic_sources,
     compositor::{self, Compositor},
     job::Callback,
     ui::{self, overlay::overlaid, FileLocation, Picker, Popup, PromptEvent},
@@ -34,7 +33,7 @@ use crate::{
 
 use std::{
     cmp::Ordering,
-    collections::{btree_map::Entry, BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet},
     fmt::{Display, Write},
     future::Future,
     path::{Path, PathBuf},
@@ -1447,79 +1446,17 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
     let callback = super::make_job_callback(
         future.expect("safety: language server supports pull diagnostics"),
         move |editor, _compositor, response: Option<lsp::DocumentDiagnosticReport>| {
-            let doc = match editor.document_by_path_mut(&original_path) {
-                Some(doc) => doc,
-                None => return,
-            };
-            let Some(language_server) = doc.language_servers().find(|ls| ls.id() == server_id)
-            else {
-                return;
-            };
-            // Pass them separately to satisfy borrow-checker
-            let offset_encoding = language_server.offset_encoding();
-            let server_id = language_server.id();
-
             let parse_diagnostic = |editor: &mut Editor,
                                     path: PathBuf,
                                     report: Vec<lsp::Diagnostic>,
                                     result_id: Option<String>| {
-                let uri = helix_core::Uri::try_from(path.clone()).unwrap();
-                let mut diagnostics: Vec<(Diagnostic, LanguageServerId)> =
+                let uri = helix_core::Uri::try_from(path);
+                let diagnostics: Vec<(Diagnostic, LanguageServerId)> =
                     report.into_iter().map(|d| (d, server_id)).collect();
 
-                let old_diagnostics = editor.diagnostics.get(&uri).cloned();
-
-                if let Some(doc) = editor.document_by_path_mut(&path) {
-                    let new_diagnostics: Vec<helix_core::Diagnostic> = diagnostics
-                        .iter()
-                        .map(|d| {
-                            Document::lsp_diagnostic_to_diagnostic(
-                                doc.text(),
-                                doc.language_config(),
-                                &d.0,
-                                server_id,
-                                offset_encoding,
-                            )
-                            .unwrap()
-                        })
-                        .collect();
-
-                    doc.previous_diagnostic_id = result_id;
-
-                    let mut unchanged_diag_sources = Vec::new();
-                    if let Some(old_diagnostics) = old_diagnostics {
-                        unchanged_diag_sources = get_unchanged_diagnostic_sources(
-                            doc,
-                            &diagnostics,
-                            &old_diagnostics,
-                            server_id,
-                        );
-                    }
-
-                    doc.replace_diagnostics(
-                        new_diagnostics,
-                        &unchanged_diag_sources,
-                        Some(server_id),
-                    );
+                if let Ok(uri) = uri {
+                    editor.add_diagnostics(diagnostics, server_id, uri, None, result_id);
                 }
-
-                // TODO: Maybe share code with application.rs:802
-                match editor.diagnostics.entry(uri) {
-                    Entry::Occupied(o) => {
-                        let current_diagnostics = o.into_mut();
-                        // there may entries of other language servers, which is why we can't overwrite the whole entry
-                        current_diagnostics.retain(|(_, lsp_id)| *lsp_id != server_id);
-                        current_diagnostics.append(&mut diagnostics);
-                        // Sort diagnostics first by severity and then by line numbers.
-                        // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
-                        current_diagnostics
-                            .sort_unstable_by_key(|(d, _)| (d.severity, d.range.start));
-                    }
-                    Entry::Vacant(v) => {
-                        diagnostics.sort_unstable_by_key(|(d, _)| (d.severity, d.range.start));
-                        v.insert(diagnostics);
-                    }
-                };
             };
 
             let handle_document_diagnostic_report_kind = |editor: &mut Editor,
@@ -1543,6 +1480,10 @@ pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::J
             };
 
             if let Some(response) = response {
+                let doc = match editor.document_by_path_mut(&original_path) {
+                    Some(doc) => doc,
+                    None => return,
+                };
                 match response {
                     lsp::DocumentDiagnosticReport::Full(report) => {
                         // Original file diagnostic

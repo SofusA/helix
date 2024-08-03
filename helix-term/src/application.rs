@@ -11,11 +11,10 @@ use helix_view::{
     align_view,
     document::{DocumentOpenError, DocumentSavedEventResult},
     editor::{ConfigEvent, EditorEvent},
-    events::DiagnosticsDidChange,
     graphics::Rect,
     theme,
     tree::Layout,
-    Align, Document, Editor,
+    Align, Editor,
 };
 use serde_json::json;
 use tui::backend::Backend;
@@ -33,7 +32,7 @@ use crate::{
 use log::{debug, error, info, warn};
 #[cfg(not(feature = "integration"))]
 use std::io::stdout;
-use std::{collections::btree_map::Entry, io::stdin, path::Path, sync::Arc};
+use std::{io::stdin, path::Path, sync::Arc};
 
 #[cfg(not(windows))]
 use anyhow::Context;
@@ -750,18 +749,6 @@ impl Application {
                             log::error!("Discarding publishDiagnostic notification sent by an uninitialized server: {}", language_server.name());
                             return;
                         }
-                        // have to inline the function because of borrow checking...
-                        let doc = self.editor.documents.values_mut()
-                            .find(|doc| doc.uri().is_some_and(|u| u == uri))
-                            .filter(|doc| {
-                                if let Some(version) = params.version {
-                                    if version != doc.version() {
-                                        log::info!("Version ({version}) is out of date for {uri:?} (expected ({}), dropping PublishDiagnostic notification", doc.version());
-                                        return false;
-                                    }
-                                }
-                                true
-                            });
 
                         let diagnostics: Vec<(lsp::Diagnostic, LanguageServerId)> = params
                             .diagnostics
@@ -769,64 +756,13 @@ impl Application {
                             .map(|d| (d, server_id))
                             .collect();
 
-                        let mut unchanged_diag_sources = Vec::new();
-                        if let Some(doc) = &doc {
-                            if let Some(old_diagnostics) = self.editor.diagnostics.get(&uri) {
-                                unchanged_diag_sources = get_unchanged_diagnostic_sources(
-                                    doc,
-                                    &diagnostics,
-                                    old_diagnostics,
-                                    server_id,
-                                );
-                            }
-                        }
-
-                        // Insert the original lsp::Diagnostics here because we may have no open document
-                        // for diagnosic message and so we can't calculate the exact position.
-                        // When using them later in the diagnostics picker, we calculate them on-demand.
-                        let diagnostics = match self.editor.diagnostics.entry(uri) {
-                            Entry::Occupied(o) => {
-                                let current_diagnostics = o.into_mut();
-                                // there may entries of other language servers, which is why we can't overwrite the whole entry
-                                current_diagnostics.retain(|(_, lsp_id)| *lsp_id != server_id);
-                                current_diagnostics.extend(diagnostics);
-                                current_diagnostics
-                                // Sort diagnostics first by severity and then by line numbers.
-                            }
-                            Entry::Vacant(v) => v.insert(diagnostics),
-                        };
-
-                        // Sort diagnostics first by severity and then by line numbers.
-                        // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
-                        diagnostics
-                            .sort_by_key(|(d, server_id)| (d.severity, d.range.start, *server_id));
-
-                        if let Some(doc) = doc {
-                            let diagnostic_of_language_server_and_not_in_unchanged_sources =
-                                |diagnostic: &lsp::Diagnostic, ls_id| {
-                                    ls_id == server_id
-                                        && diagnostic.source.as_ref().map_or(true, |source| {
-                                            !unchanged_diag_sources.contains(source)
-                                        })
-                                };
-                            let diagnostics = Editor::doc_diagnostics_with_filter(
-                                &self.editor.language_servers,
-                                &self.editor.diagnostics,
-                                doc,
-                                diagnostic_of_language_server_and_not_in_unchanged_sources,
-                            );
-                            doc.replace_diagnostics(
-                                diagnostics,
-                                &unchanged_diag_sources,
-                                Some(server_id),
-                            );
-
-                            let doc = doc.id();
-                            helix_event::dispatch(DiagnosticsDidChange {
-                                editor: &mut self.editor,
-                                doc,
-                            });
-                        }
+                        self.editor.add_diagnostics(
+                            diagnostics,
+                            server_id,
+                            uri,
+                            params.version,
+                            None,
+                        );
                     }
                     Notification::ShowMessage(params) => {
                         log::warn!("unhandled window/showMessage: {:?}", params);
@@ -1239,31 +1175,4 @@ impl Application {
 
         errs
     }
-}
-
-pub fn get_unchanged_diagnostic_sources(
-    doc: &Document,
-    diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
-    old_diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
-    server_id: LanguageServerId,
-) -> Vec<String> {
-    let mut unchanged_diag_sources = Vec::new();
-    let lang_conf = doc.language.clone();
-
-    if let Some(lang_conf) = &lang_conf {
-        for source in &lang_conf.persistent_diagnostic_sources {
-            let new_diagnostics = diagnostics
-                .iter()
-                .filter(|d| d.0.source.as_ref() == Some(source));
-            let old_diagnostics = old_diagnostics
-                .iter()
-                .filter(|(d, d_server)| *d_server == server_id && d.source.as_ref() == Some(source))
-                .map(|(d, _)| d);
-            if new_diagnostics.map(|x| &x.0).eq(old_diagnostics) {
-                unchanged_diag_sources.push(source.clone())
-            }
-        }
-    }
-
-    unchanged_diag_sources
 }
