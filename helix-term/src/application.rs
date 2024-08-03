@@ -15,7 +15,7 @@ use helix_view::{
     graphics::Rect,
     theme,
     tree::Layout,
-    Align, Editor,
+    Align, Document, Editor,
 };
 use serde_json::json;
 use tui::backend::Backend;
@@ -737,7 +737,7 @@ impl Application {
                             ));
                         }
                     }
-                    Notification::PublishDiagnostics(mut params) => {
+                    Notification::PublishDiagnostics(params) => {
                         let uri = match helix_core::Uri::try_from(params.uri) {
                             Ok(uri) => uri,
                             Err(err) => {
@@ -763,40 +763,23 @@ impl Application {
                                 true
                             });
 
+                        let diagnostics: Vec<(lsp::Diagnostic, LanguageServerId)> = params
+                            .diagnostics
+                            .into_iter()
+                            .map(|d| (d, server_id))
+                            .collect();
+
                         let mut unchanged_diag_sources = Vec::new();
                         if let Some(doc) = &doc {
-                            let lang_conf = doc.language.clone();
-
-                            if let Some(lang_conf) = &lang_conf {
-                                if let Some(old_diagnostics) = self.editor.diagnostics.get(&uri) {
-                                    if !lang_conf.persistent_diagnostic_sources.is_empty() {
-                                        // Sort diagnostics first by severity and then by line numbers.
-                                        // Note: The `lsp::DiagnosticSeverity` enum is already defined in decreasing order
-                                        params
-                                            .diagnostics
-                                            .sort_by_key(|d| (d.severity, d.range.start));
-                                    }
-                                    for source in &lang_conf.persistent_diagnostic_sources {
-                                        let new_diagnostics = params
-                                            .diagnostics
-                                            .iter()
-                                            .filter(|d| d.source.as_ref() == Some(source));
-                                        let old_diagnostics = old_diagnostics
-                                            .iter()
-                                            .filter(|(d, d_server)| {
-                                                *d_server == server_id
-                                                    && d.source.as_ref() == Some(source)
-                                            })
-                                            .map(|(d, _)| d);
-                                        if new_diagnostics.eq(old_diagnostics) {
-                                            unchanged_diag_sources.push(source.clone())
-                                        }
-                                    }
-                                }
+                            if let Some(old_diagnostics) = self.editor.diagnostics.get(&uri) {
+                                unchanged_diag_sources = get_unchanged_diagnostic_sources(
+                                    doc,
+                                    &diagnostics,
+                                    old_diagnostics,
+                                    server_id,
+                                );
                             }
                         }
-
-                        let diagnostics = params.diagnostics.into_iter().map(|d| (d, server_id));
 
                         // Insert the original lsp::Diagnostics here because we may have no open document
                         // for diagnosic message and so we can't calculate the exact position.
@@ -810,7 +793,7 @@ impl Application {
                                 current_diagnostics
                                 // Sort diagnostics first by severity and then by line numbers.
                             }
-                            Entry::Vacant(v) => v.insert(diagnostics.collect()),
+                            Entry::Vacant(v) => v.insert(diagnostics),
                         };
 
                         // Sort diagnostics first by severity and then by line numbers.
@@ -1256,4 +1239,31 @@ impl Application {
 
         errs
     }
+}
+
+pub fn get_unchanged_diagnostic_sources(
+    doc: &Document,
+    diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
+    old_diagnostics: &[(lsp::Diagnostic, LanguageServerId)],
+    server_id: LanguageServerId,
+) -> Vec<String> {
+    let mut unchanged_diag_sources = Vec::new();
+    let lang_conf = doc.language.clone();
+
+    if let Some(lang_conf) = &lang_conf {
+        for source in &lang_conf.persistent_diagnostic_sources {
+            let new_diagnostics = diagnostics
+                .iter()
+                .filter(|d| d.0.source.as_ref() == Some(source));
+            let old_diagnostics = old_diagnostics
+                .iter()
+                .filter(|(d, d_server)| *d_server == server_id && d.source.as_ref() == Some(source))
+                .map(|(d, _)| d);
+            if new_diagnostics.map(|x| &x.0).eq(old_diagnostics) {
+                unchanged_diag_sources.push(source.clone())
+            }
+        }
+    }
+
+    unchanged_diag_sources
 }
