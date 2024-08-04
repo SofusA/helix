@@ -1427,85 +1427,89 @@ fn compute_inlay_hints_for_view(
 
 pub fn pull_diagnostic_for_current_doc(editor: &Editor, jobs: &mut crate::job::Jobs) {
     let doc = doc!(editor);
-    let Some(language_server) = doc
-        .language_servers_with_feature(LanguageServerFeature::PullDiagnostics)
-        .next()
-    else {
-        return;
-    };
 
-    let future = language_server
-        .text_document_diagnostic(doc.identifier(), doc.previous_diagnostic_id.clone());
+    for language_server in doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics)
+    {
+        let future = language_server
+            .text_document_diagnostic(doc.identifier(), doc.previous_diagnostic_id.clone());
 
-    let server_id = language_server.id();
-    let original_path = doc
-        .path()
-        .expect("safety: the file has a path if there is a running language server")
-        .to_owned();
+        let server_id = language_server.id();
+        let original_path = doc
+            .path()
+            .expect("safety: the file has a path if there is a running language server")
+            .to_owned();
 
-    let callback = super::make_job_callback(
-        future.expect("safety: language server supports pull diagnostics"),
-        move |editor, _compositor, response: Option<lsp::DocumentDiagnosticReport>| {
-            let parse_diagnostic = |editor: &mut Editor,
-                                    path: PathBuf,
-                                    report: Vec<lsp::Diagnostic>,
-                                    result_id: Option<String>| {
-                let uri = helix_core::Uri::try_from(path);
-                let diagnostics: Vec<(Diagnostic, LanguageServerId)> =
-                    report.into_iter().map(|d| (d, server_id)).collect();
+        let callback = super::make_job_callback(
+            future.expect("safety: language server supports pull diagnostics"),
+            move |editor, _compositor, response: Option<lsp::DocumentDiagnosticReport>| {
+                let parse_diagnostic =
+                    |editor: &mut Editor,
+                     path: PathBuf,
+                     report: Vec<lsp::Diagnostic>,
+                     result_id: Option<String>| {
+                        let uri = helix_core::Uri::try_from(path);
+                        let diagnostics: Vec<(Diagnostic, LanguageServerId)> =
+                            report.into_iter().map(|d| (d, server_id)).collect();
 
-                if let Ok(uri) = uri {
-                    editor.add_diagnostics(diagnostics, server_id, uri, None, result_id);
-                }
-            };
-
-            let handle_document_diagnostic_report_kind = |editor: &mut Editor,
-                                                          report: Option<
-                HashMap<lsp::Url, lsp::DocumentDiagnosticReportKind>,
-            >| {
-                for (url, report) in report.into_iter().flatten() {
-                    match report {
-                        lsp::DocumentDiagnosticReportKind::Full(report) => {
-                            let path = url.to_file_path().unwrap();
-                            parse_diagnostic(editor, path, report.items, report.result_id);
+                        if let Ok(uri) = uri {
+                            editor.add_diagnostics(diagnostics, server_id, uri, None, result_id);
                         }
-                        lsp::DocumentDiagnosticReportKind::Unchanged(report) => {
-                            let Some(doc) = editor.document_by_path_mut(url.path()) else {
-                                return;
-                            };
-                            doc.previous_diagnostic_id = Some(report.result_id);
+                    };
+
+                let handle_document_diagnostic_report_kind = |editor: &mut Editor,
+                                                              report: Option<
+                    HashMap<lsp::Url, lsp::DocumentDiagnosticReportKind>,
+                >| {
+                    for (url, report) in report.into_iter().flatten() {
+                        match report {
+                            lsp::DocumentDiagnosticReportKind::Full(report) => {
+                                let path = url.to_file_path().unwrap();
+                                parse_diagnostic(editor, path, report.items, report.result_id);
+                            }
+                            lsp::DocumentDiagnosticReportKind::Unchanged(report) => {
+                                let Some(doc) = editor.document_by_path_mut(url.path()) else {
+                                    return;
+                                };
+                                doc.previous_diagnostic_id = Some(report.result_id);
+                            }
                         }
                     }
-                }
-            };
-
-            if let Some(response) = response {
-                let doc = match editor.document_by_path_mut(&original_path) {
-                    Some(doc) => doc,
-                    None => return,
                 };
-                match response {
-                    lsp::DocumentDiagnosticReport::Full(report) => {
-                        // Original file diagnostic
-                        parse_diagnostic(
-                            editor,
-                            original_path,
-                            report.full_document_diagnostic_report.items,
-                            report.full_document_diagnostic_report.result_id,
-                        );
 
-                        // Related files diagnostic
-                        handle_document_diagnostic_report_kind(editor, report.related_documents);
-                    }
-                    lsp::DocumentDiagnosticReport::Unchanged(report) => {
-                        doc.previous_diagnostic_id =
-                            Some(report.unchanged_document_diagnostic_report.result_id);
-                        handle_document_diagnostic_report_kind(editor, report.related_documents);
+                if let Some(response) = response {
+                    let doc = match editor.document_by_path_mut(&original_path) {
+                        Some(doc) => doc,
+                        None => return,
+                    };
+                    match response {
+                        lsp::DocumentDiagnosticReport::Full(report) => {
+                            // Original file diagnostic
+                            parse_diagnostic(
+                                editor,
+                                original_path,
+                                report.full_document_diagnostic_report.items,
+                                report.full_document_diagnostic_report.result_id,
+                            );
+
+                            // Related files diagnostic
+                            handle_document_diagnostic_report_kind(
+                                editor,
+                                report.related_documents,
+                            );
+                        }
+                        lsp::DocumentDiagnosticReport::Unchanged(report) => {
+                            doc.previous_diagnostic_id =
+                                Some(report.unchanged_document_diagnostic_report.result_id);
+                            handle_document_diagnostic_report_kind(
+                                editor,
+                                report.related_documents,
+                            );
+                        }
                     }
                 }
-            }
-        },
-    );
+            },
+        );
 
-    jobs.callback(callback);
+        jobs.callback(callback);
+    }
 }
