@@ -2132,6 +2132,10 @@ impl Document {
     pub fn reset_all_inlay_hints(&mut self) {
         self.inlay_hints = Default::default();
     }
+
+    pub fn has_language_server_with_feature(&self, feature: LanguageServerFeature) -> bool {
+        self.language_servers_with_feature(feature).next().is_some()
+    }
 }
 
 #[derive(Debug, Default)]

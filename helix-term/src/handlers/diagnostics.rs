@@ -20,11 +20,13 @@ use crate::job;
 const TIMEOUT: u64 = 120;
 
 #[derive(Debug)]
-pub(super) struct PullDiagnosticsHandler {}
+pub(super) struct PullDiagnosticsHandler {
+    document_id: Option<helix_view::DocumentId>,
+}
 
 impl PullDiagnosticsHandler {
     pub fn new() -> PullDiagnosticsHandler {
-        PullDiagnosticsHandler {}
+        PullDiagnosticsHandler { document_id: None }
     }
 }
 
@@ -36,19 +38,23 @@ impl helix_event::AsyncHook for PullDiagnosticsHandler {
         event: Self::Event,
         _: Option<tokio::time::Instant>,
     ) -> Option<tokio::time::Instant> {
-        match event {
-            PullDiagnosticsEvent::Trigger => {}
-        }
+        self.document_id = Some(event.document_id);
         Some(Instant::now() + Duration::from_millis(TIMEOUT))
     }
 
     fn finish_debounce(&mut self) {
-        job::dispatch_blocking(move |editor, _| pull_diagnostic_for_current_doc(editor))
+        let document_id = self.document_id;
+
+        job::dispatch_blocking(move |editor, _| {
+            if let Some(document_id) = document_id {
+                pull_diagnostic_for_document(editor, document_id)
+            };
+        })
     }
 }
 
-fn pull_diagnostic_for_current_doc(editor: &mut Editor) {
-    let (_, doc) = current!(editor);
+fn pull_diagnostic_for_document(editor: &mut Editor, document_id: helix_view::DocumentId) {
+    let doc = doc_mut!(editor, &document_id);
 
     for language_server in doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics)
     {
@@ -76,7 +82,13 @@ fn pull_diagnostic_for_current_doc(editor: &mut Editor) {
                                 Err(_) => None,
                             };
 
-                        show_pull_diagnostics(editor, parsed_response, server_id, original_path)
+                        show_pull_diagnostics(
+                            editor,
+                            parsed_response,
+                            server_id,
+                            original_path,
+                            document_id,
+                        )
                     })
                     .await
                 }
@@ -91,6 +103,7 @@ fn show_pull_diagnostics(
     response: Option<lsp::DocumentDiagnosticReport>,
     server_id: LanguageServerId,
     original_path: PathBuf,
+    document_id: helix_view::DocumentId,
 ) {
     let parse_diagnostic = |editor: &mut Editor,
                             path: PathBuf,
@@ -115,9 +128,7 @@ fn show_pull_diagnostics(
                         parse_diagnostic(editor, path, report.items, report.result_id);
                     }
                     lsp::DocumentDiagnosticReportKind::Unchanged(report) => {
-                        let Some(doc) = editor.document_by_path_mut(url.path()) else {
-                            return;
-                        };
+                        let doc = doc_mut!(editor, &document_id);
                         doc.previous_diagnostic_id = Some(report.result_id);
                     }
                 }
@@ -125,10 +136,7 @@ fn show_pull_diagnostics(
         };
 
     if let Some(response) = response {
-        let doc = match editor.document_by_path_mut(&original_path) {
-            Some(doc) => doc,
-            None => return,
-        };
+        let doc = doc_mut!(editor, &document_id);
         match response {
             lsp::DocumentDiagnosticReport::Full(report) => {
                 // Original file diagnostic
@@ -169,8 +177,16 @@ pub(super) fn register_hooks(handlers: &Handlers) {
 
     let tx = handlers.pull_diagnostics.clone();
     register_hook!(move |event: &mut DocumentDidChange<'_>| {
-        if event.doc.config.load().lsp.auto_signature_help {
-            send_blocking(&tx, PullDiagnosticsEvent::Trigger);
+        if event
+            .doc
+            .has_language_server_with_feature(LanguageServerFeature::PullDiagnostics)
+        {
+            send_blocking(
+                &tx,
+                PullDiagnosticsEvent {
+                    document_id: event.doc.id(),
+                },
+            );
         }
         Ok(())
     });

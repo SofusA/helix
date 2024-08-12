@@ -47,8 +47,8 @@ pub enum SignatureHelpEvent {
     RequestComplete { open: bool },
 }
 
-pub enum PullDiagnosticsEvent {
-    Trigger,
+pub struct PullDiagnosticsEvent {
+    pub document_id: DocumentId,
 }
 
 #[derive(Debug)]
