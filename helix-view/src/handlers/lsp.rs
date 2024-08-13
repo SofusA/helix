@@ -48,7 +48,7 @@ pub enum SignatureHelpEvent {
 }
 
 pub struct PullDiagnosticsEvent {
-    pub document_id: DocumentId,
+    pub language_server_ids: Vec<helix_lsp::LanguageServerId>,
 }
 
 #[derive(Debug)]
