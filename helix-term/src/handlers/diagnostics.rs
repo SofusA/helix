@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use helix_core::syntax::LanguageServerFeature;
@@ -7,11 +7,13 @@ use helix_event::{register_hook, send_blocking};
 use helix_lsp::lsp::{self, Diagnostic};
 use helix_lsp::LanguageServerId;
 use helix_view::document::Mode;
-use helix_view::events::{DiagnosticsDidChange, DocumentDidChange};
+use helix_view::events::{DiagnosticsDidChange, DocumentDidChange, DocumentDidOpen};
 use helix_view::handlers::diagnostics::DiagnosticEvent;
-use helix_view::handlers::lsp::PullDiagnosticsEvent;
+use helix_view::handlers::lsp::{
+    PullDiagnosticsForDocumentsEvent, PullDiagnosticsForLanguageServersEvent,
+};
 use helix_view::handlers::Handlers;
-use helix_view::Editor;
+use helix_view::{DocumentId, Editor};
 use tokio::time::Instant;
 
 use crate::events::OnModeSwitch;
@@ -47,16 +49,26 @@ pub(super) fn register_hooks(handlers: &Handlers) {
 
             send_blocking(
                 &tx,
-                PullDiagnosticsEvent {
+                PullDiagnosticsForLanguageServersEvent {
                     language_server_ids,
                 },
             );
         }
         Ok(())
     });
-}
 
-const TIMEOUT: u64 = 120;
+    let tx = handlers.pull_diagnostics_document.clone();
+    register_hook!(move |event: &mut DocumentDidOpen| {
+        send_blocking(
+            &tx,
+            PullDiagnosticsForDocumentsEvent {
+                document_id: event.doc,
+            },
+        );
+
+        Ok(())
+    });
+}
 
 #[derive(Debug)]
 pub(super) struct PullDiagnosticsHandler {
@@ -70,9 +82,20 @@ impl PullDiagnosticsHandler {
         }
     }
 }
+pub(super) struct PullDiagnosticsForDocumentsHandler {
+    document_ids: HashSet<DocumentId>,
+}
+
+impl PullDiagnosticsForDocumentsHandler {
+    pub fn new() -> PullDiagnosticsForDocumentsHandler {
+        PullDiagnosticsForDocumentsHandler {
+            document_ids: [].into(),
+        }
+    }
+}
 
 impl helix_event::AsyncHook for PullDiagnosticsHandler {
-    type Event = PullDiagnosticsEvent;
+    type Event = PullDiagnosticsForLanguageServersEvent;
 
     fn handle_event(
         &mut self,
@@ -80,27 +103,98 @@ impl helix_event::AsyncHook for PullDiagnosticsHandler {
         _: Option<tokio::time::Instant>,
     ) -> Option<tokio::time::Instant> {
         self.language_server_ids = event.language_server_ids;
-        Some(Instant::now() + Duration::from_millis(TIMEOUT))
+        Some(Instant::now() + Duration::from_millis(120))
     }
 
     fn finish_debounce(&mut self) {
         let language_servers = self.language_server_ids.clone();
         job::dispatch_blocking(move |editor, _| {
-            pull_diagnostic_for_document(
-                editor,
-                language_servers,
-                editor.documents().map(|x| x.id()).collect(),
-            )
+            pull_diagnostic_for_language_servers(editor, language_servers)
         })
     }
 }
 
-fn pull_diagnostic_for_document(
+impl helix_event::AsyncHook for PullDiagnosticsForDocumentsHandler {
+    type Event = PullDiagnosticsForDocumentsEvent;
+
+    fn handle_event(
+        &mut self,
+        event: Self::Event,
+        _: Option<tokio::time::Instant>,
+    ) -> Option<tokio::time::Instant> {
+        self.document_ids.insert(event.document_id);
+
+        Some(Instant::now() + Duration::from_millis(50))
+    }
+
+    fn finish_debounce(&mut self) {
+        let document_ids = self.document_ids.clone();
+        job::dispatch_blocking(move |editor, _| {
+            pull_diagnostics_for_documents(editor, document_ids)
+        })
+    }
+}
+
+fn pull_diagnostics_for_documents(editor: &mut Editor, document_ids: HashSet<DocumentId>) {
+    for document_id in document_ids {
+        let doc = doc_mut!(editor, &document_id);
+
+        log::error!("Pulling for {:?}", doc.path());
+
+        let language_servers =
+            doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
+
+        for language_server in language_servers {
+            let Some(future) = language_server
+                .text_document_diagnostic(doc.identifier(), doc.previous_diagnostic_id.clone())
+            else {
+                return;
+            };
+
+            let Some(uri) = doc.uri() else {
+                return;
+            };
+
+            let server_id = language_server.id();
+
+            tokio::spawn(async move {
+                match future.await {
+                    Ok(res) => {
+                        job::dispatch(move |editor, _| {
+                            let parsed_response: Option<lsp::DocumentDiagnosticReport> =
+                                match serde_json::from_value(res) {
+                                    Ok(result) => Some(result),
+                                    Err(_) => None,
+                                };
+
+                            let Some(response) = parsed_response else {
+                                return;
+                            };
+
+                            handle_pull_diagnostics_response(
+                                editor,
+                                response,
+                                server_id,
+                                uri,
+                                &document_id,
+                            )
+                        })
+                        .await
+                    }
+                    Err(err) => log::error!("Pull diagnostic request failed: {err}"),
+                }
+            });
+        }
+    }
+}
+
+fn pull_diagnostic_for_language_servers(
     editor: &mut Editor,
     language_server_ids: Vec<LanguageServerId>,
-    document_ids: Vec<helix_view::DocumentId>,
 ) {
-    for document_id in document_ids.clone() {
+    let document_ids: Vec<_> = editor.documents().map(|x| x.id()).collect();
+
+    for document_id in document_ids {
         let doc = doc_mut!(editor, &document_id);
         let language_servers = doc
             .language_servers()
@@ -123,8 +217,6 @@ fn pull_diagnostic_for_document(
                 match future.await {
                     Ok(res) => {
                         job::dispatch(move |editor, _| {
-                            log::error!("{}", res);
-
                             let parsed_response: Option<lsp::DocumentDiagnosticReport> =
                                 match serde_json::from_value(res) {
                                     Ok(result) => Some(result),
@@ -135,18 +227,24 @@ fn pull_diagnostic_for_document(
                                 return;
                             };
 
-                            show_pull_diagnostics(editor, response, server_id, uri, &document_id)
+                            handle_pull_diagnostics_response(
+                                editor,
+                                response,
+                                server_id,
+                                uri,
+                                &document_id,
+                            )
                         })
                         .await
                     }
-                    Err(err) => log::error!("signature help request failed: {err}"),
+                    Err(err) => log::error!("Pull diagnostic request failed: {err}"),
                 }
             });
         }
     }
 }
 
-fn show_pull_diagnostics(
+fn handle_pull_diagnostics_response(
     editor: &mut Editor,
     response: lsp::DocumentDiagnosticReport,
     server_id: LanguageServerId,
@@ -157,7 +255,7 @@ fn show_pull_diagnostics(
     match response {
         lsp::DocumentDiagnosticReport::Full(report) => {
             // Original file diagnostic
-            parse_diagnostic(
+            add_diagnostic(
                 editor,
                 uri,
                 report.full_document_diagnostic_report.items,
@@ -187,7 +285,7 @@ fn show_pull_diagnostics(
     }
 }
 
-fn parse_diagnostic(
+fn add_diagnostic(
     editor: &mut Editor,
     uri: Uri,
     report: Vec<lsp::Diagnostic>,
@@ -213,7 +311,7 @@ fn handle_document_diagnostic_report_kind(
                     return;
                 };
 
-                parse_diagnostic(editor, uri, report.items, report.result_id, server_id);
+                add_diagnostic(editor, uri, report.items, report.result_id, server_id);
             }
             lsp::DocumentDiagnosticReportKind::Unchanged(report) => {
                 let doc = doc_mut!(editor, &document_id);

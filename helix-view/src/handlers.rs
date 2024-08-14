@@ -19,7 +19,8 @@ pub struct Handlers {
     pub completions: Sender<lsp::CompletionEvent>,
     pub signature_hints: Sender<lsp::SignatureHelpEvent>,
     pub auto_save: Sender<AutoSaveEvent>,
-    pub pull_diagnostics: Sender<lsp::PullDiagnosticsEvent>,
+    pub pull_diagnostics: Sender<lsp::PullDiagnosticsForLanguageServersEvent>,
+    pub pull_diagnostics_document: Sender<lsp::PullDiagnosticsForDocumentsEvent>,
 }
 
 impl Handlers {

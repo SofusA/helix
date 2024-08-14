@@ -14,6 +14,8 @@ use crate::handlers::signature_help::SignatureHelpHandler;
 pub use completion::trigger_auto_completion;
 pub use helix_view::handlers::Handlers;
 
+use self::diagnostics::PullDiagnosticsForDocumentsHandler;
+
 mod auto_save;
 pub mod completion;
 mod diagnostics;
@@ -26,12 +28,14 @@ pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {
     let signature_hints = SignatureHelpHandler::new().spawn();
     let auto_save = AutoSaveHandler::new().spawn();
     let pull_diagnostics = PullDiagnosticsHandler::new().spawn();
+    let pull_diagnostics_document = PullDiagnosticsForDocumentsHandler::new().spawn();
 
     let handlers = Handlers {
         completions,
         signature_hints,
         auto_save,
         pull_diagnostics,
+        pull_diagnostics_document,
     };
 
     completion::register_hooks(&handlers);
