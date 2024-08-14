@@ -3,6 +3,7 @@ use crate::{
     document::{
         DocumentOpenError, DocumentSavedEventFuture, DocumentSavedEventResult, Mode, SavePoint,
     },
+    events::DocumentDidOpen,
     graphics::{CursorKind, Rect},
     handlers::Handlers,
     info::Info,
@@ -1721,6 +1722,11 @@ impl Editor {
         };
 
         self.switch(id, action);
+
+        if let Some(doc) = self.document_mut(id) {
+            helix_event::dispatch(DocumentDidOpen { doc });
+        };
+
         Ok(id)
     }
 
