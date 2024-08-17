@@ -52,10 +52,6 @@ pub struct PullDiagnosticsForLanguageServersEvent {
     pub language_server_ids: HashSet<helix_lsp::LanguageServerId>,
 }
 
-pub struct PullDiagnosticsForDocumentsEvent {
-    pub document_id: DocumentId,
-}
-
 #[derive(Debug)]
 pub struct ApplyEditError {
     pub kind: ApplyEditErrorKind,

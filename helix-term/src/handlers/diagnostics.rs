@@ -9,9 +9,7 @@ use helix_lsp::LanguageServerId;
 use helix_view::document::Mode;
 use helix_view::events::{DiagnosticsDidChange, DocumentDidChange, DocumentDidOpen};
 use helix_view::handlers::diagnostics::DiagnosticEvent;
-use helix_view::handlers::lsp::{
-    PullDiagnosticsForDocumentsEvent, PullDiagnosticsForLanguageServersEvent,
-};
+use helix_view::handlers::lsp::PullDiagnosticsForLanguageServersEvent;
 use helix_view::handlers::Handlers;
 use helix_view::{DocumentId, Editor};
 use tokio::time::Instant;
@@ -54,18 +52,24 @@ pub(super) fn register_hooks(handlers: &Handlers) {
         Ok(())
     });
 
-    let tx = handlers.pull_diagnostics_for_documents.clone();
     register_hook!(move |event: &mut DocumentDidOpen<'_>| {
         if event
             .doc
             .has_language_server_with_feature(LanguageServerFeature::PullDiagnostics)
         {
-            send_blocking(
-                &tx,
-                PullDiagnosticsForDocumentsEvent {
-                    document_id: event.doc.id(),
-                },
-            );
+            let document_id = event.doc.id();
+            job::dispatch_blocking(move |editor, _| {
+                let Some(doc) = editor.document_mut(document_id) else {
+                    return;
+                };
+
+                let language_servers =
+                    doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
+
+                for language_server in language_servers {
+                    pull_diagnostics_for_document(doc, language_server);
+                }
+            })
         }
 
         Ok(())
@@ -81,17 +85,6 @@ impl PullDiagnosticsForLanguageServersHandler {
     pub fn new() -> PullDiagnosticsForLanguageServersHandler {
         PullDiagnosticsForLanguageServersHandler {
             language_server_ids: [].into(),
-        }
-    }
-}
-pub(super) struct PullDiagnosticsForDocumentsHandler {
-    document_ids: HashSet<DocumentId>,
-}
-
-impl PullDiagnosticsForDocumentsHandler {
-    pub fn new() -> PullDiagnosticsForDocumentsHandler {
-        PullDiagnosticsForDocumentsHandler {
-            document_ids: [].into(),
         }
     }
 }
@@ -113,41 +106,6 @@ impl helix_event::AsyncHook for PullDiagnosticsForLanguageServersHandler {
         job::dispatch_blocking(move |editor, _| {
             pull_diagnostic_for_language_servers(editor, language_servers)
         })
-    }
-}
-
-impl helix_event::AsyncHook for PullDiagnosticsForDocumentsHandler {
-    type Event = PullDiagnosticsForDocumentsEvent;
-
-    fn handle_event(
-        &mut self,
-        event: Self::Event,
-        _: Option<tokio::time::Instant>,
-    ) -> Option<tokio::time::Instant> {
-        self.document_ids.insert(event.document_id);
-        Some(Instant::now() + Duration::from_millis(50))
-    }
-
-    fn finish_debounce(&mut self) {
-        let document_ids = self.document_ids.clone();
-        job::dispatch_blocking(move |editor, _| {
-            pull_diagnostics_for_documents(editor, document_ids)
-        })
-    }
-}
-
-fn pull_diagnostics_for_documents(editor: &mut Editor, document_ids: HashSet<DocumentId>) {
-    for document_id in document_ids {
-        let Some(doc) = editor.document_mut(document_id) else {
-            return;
-        };
-
-        let language_servers =
-            doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
-
-        for language_server in language_servers {
-            pull_diagnostics_for_document(doc, language_server);
-        }
     }
 }
 
@@ -209,7 +167,7 @@ fn handle_pull_diagnostics_response(
     response: lsp::DocumentDiagnosticReport,
     server_id: LanguageServerId,
     uri: Uri,
-    document_id: helix_view::DocumentId,
+    document_id: DocumentId,
 ) {
     let Some(doc) = editor.document_mut(document_id) else {
         return;
@@ -263,7 +221,7 @@ fn add_diagnostics_to_editor(
 
 fn handle_document_diagnostic_report_kind(
     editor: &mut Editor,
-    document_id: helix_view::DocumentId,
+    document_id: DocumentId,
     report: Option<HashMap<lsp::Url, lsp::DocumentDiagnosticReportKind>>,
     server_id: LanguageServerId,
 ) {

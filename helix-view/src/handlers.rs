@@ -20,7 +20,6 @@ pub struct Handlers {
     pub signature_hints: Sender<lsp::SignatureHelpEvent>,
     pub auto_save: Sender<AutoSaveEvent>,
     pub pull_diagnostics_for_language_servers: Sender<lsp::PullDiagnosticsForLanguageServersEvent>,
-    pub pull_diagnostics_for_documents: Sender<lsp::PullDiagnosticsForDocumentsEvent>,
 }
 
 impl Handlers {
