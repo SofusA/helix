@@ -734,6 +734,8 @@ impl Application {
                                 doc.text(),
                                 language_id,
                             ));
+
+                            helix_event::dispatch(helix_view::events::DocumentDidOpen { doc });
                         }
                     }
                     Notification::PublishDiagnostics(params) => {
