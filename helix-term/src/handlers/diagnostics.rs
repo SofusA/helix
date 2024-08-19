@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 
 use helix_core::syntax::LanguageServerFeature;
@@ -9,7 +9,7 @@ use helix_lsp::LanguageServerId;
 use helix_view::document::Mode;
 use helix_view::events::{DiagnosticsDidChange, DocumentDidChange, DocumentDidOpen};
 use helix_view::handlers::diagnostics::DiagnosticEvent;
-use helix_view::handlers::lsp::PullDiagnosticsForLanguageServersEvent;
+use helix_view::handlers::lsp::PullDiagnosticsEvent;
 use helix_view::handlers::Handlers;
 use helix_view::{DocumentId, Editor};
 use tokio::time::Instant;
@@ -33,21 +33,14 @@ pub(super) fn register_hooks(handlers: &Handlers) {
         Ok(())
     });
 
-    let tx = handlers.pull_diagnostics_for_language_servers.clone();
+    let tx = handlers.pull_diagnostics.clone();
     register_hook!(move |event: &mut DocumentDidChange<'_>| {
-        let language_server_ids: HashSet<_> = event
+        if event
             .doc
-            .language_servers_with_feature(LanguageServerFeature::PullDiagnostics)
-            .map(|x| x.id())
-            .collect();
-
-        if !language_server_ids.is_empty() {
-            send_blocking(
-                &tx,
-                PullDiagnosticsForLanguageServersEvent {
-                    language_server_ids,
-                },
-            );
+            .has_language_server_with_feature(LanguageServerFeature::PullDiagnostics)
+        {
+            let document_id = event.doc.id();
+            send_blocking(&tx, PullDiagnosticsEvent { document_id });
         }
         Ok(())
     });
@@ -59,7 +52,7 @@ pub(super) fn register_hooks(handlers: &Handlers) {
         {
             let document_id = event.doc.id();
             job::dispatch_blocking(move |editor, _| {
-                let Some(doc) = editor.document_mut(document_id) else {
+                let Some(doc) = editor.document(document_id) else {
                     return;
                 };
 
@@ -77,56 +70,47 @@ pub(super) fn register_hooks(handlers: &Handlers) {
 }
 
 #[derive(Debug)]
-pub(super) struct PullDiagnosticsForLanguageServersHandler {
-    language_server_ids: HashSet<LanguageServerId>,
+pub(super) struct PullDiagnosticsHandler {
+    document_id: Option<DocumentId>,
 }
 
-impl PullDiagnosticsForLanguageServersHandler {
-    pub fn new() -> PullDiagnosticsForLanguageServersHandler {
-        PullDiagnosticsForLanguageServersHandler {
-            language_server_ids: [].into(),
-        }
+impl PullDiagnosticsHandler {
+    pub fn new() -> PullDiagnosticsHandler {
+        PullDiagnosticsHandler { document_id: None }
     }
 }
 
-impl helix_event::AsyncHook for PullDiagnosticsForLanguageServersHandler {
-    type Event = PullDiagnosticsForLanguageServersEvent;
+impl helix_event::AsyncHook for PullDiagnosticsHandler {
+    type Event = PullDiagnosticsEvent;
 
     fn handle_event(
         &mut self,
         event: Self::Event,
         _: Option<tokio::time::Instant>,
     ) -> Option<tokio::time::Instant> {
-        self.language_server_ids = event.language_server_ids;
+        self.document_id = Some(event.document_id);
         Some(Instant::now() + Duration::from_millis(120))
     }
 
     fn finish_debounce(&mut self) {
-        let language_servers = self.language_server_ids.clone();
+        let document_id = self.document_id;
         job::dispatch_blocking(move |editor, _| {
-            pull_diagnostic_for_language_servers(editor, language_servers)
+            let Some(document_id) = document_id else {
+                return;
+            };
+
+            let doc = editor.document(document_id);
+            let Some(doc) = doc else {
+                return;
+            };
+
+            let language_servers =
+                doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
+
+            for language_server in language_servers {
+                pull_diagnostics_for_document(doc, language_server);
+            }
         })
-    }
-}
-
-fn pull_diagnostic_for_language_servers(
-    editor: &mut Editor,
-    language_server_ids: HashSet<LanguageServerId>,
-) {
-    let document_ids: Vec<_> = editor.documents().map(|x| x.id()).collect();
-
-    for document_id in document_ids {
-        let Some(doc) = editor.document_mut(document_id) else {
-            return;
-        };
-
-        let language_servers = doc
-            .language_servers()
-            .filter(|x| language_server_ids.contains(&x.id()));
-
-        for language_server in language_servers {
-            pull_diagnostics_for_document(doc, language_server);
-        }
     }
 }
 

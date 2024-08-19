@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fmt::Display;
 
 use crate::editor::Action;
@@ -48,8 +47,8 @@ pub enum SignatureHelpEvent {
     RequestComplete { open: bool },
 }
 
-pub struct PullDiagnosticsForLanguageServersEvent {
-    pub language_server_ids: HashSet<helix_lsp::LanguageServerId>,
+pub struct PullDiagnosticsEvent {
+    pub document_id: DocumentId,
 }
 
 #[derive(Debug)]
