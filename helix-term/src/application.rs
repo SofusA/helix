@@ -703,6 +703,9 @@ impl Application {
                 };
 
                 match notification {
+                    Notification::WorkspaceDiagnosticRefresh => {
+                        log::error!("bingo bango!");
+                    }
                     Notification::Initialized => {
                         let language_server = language_server!();
 

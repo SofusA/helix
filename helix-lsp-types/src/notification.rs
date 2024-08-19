@@ -67,6 +67,9 @@ macro_rules! lsp_notification {
     ("workspace/didChangeWorkspaceFolders") => {
         $crate::notification::DidChangeWorkspaceFolders
     };
+    ("workspace/diagnostic/refresh") => {
+        $crate::notification::WorkspaceDiagnosticRefresh
+    };
     ("$/progress") => {
         $crate::notification::Progress
     };
@@ -309,6 +312,18 @@ impl Notification for DidDeleteFiles {
     const METHOD: &'static str = "workspace/didDeleteFiles";
 }
 
+#[derive(Debug, Eq, PartialEq, Clone, Default, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoParams {}
+
+#[derive(Debug)]
+pub enum WorkspaceDiagnosticRefresh {}
+
+impl Notification for WorkspaceDiagnosticRefresh {
+    type Params = NoParams;
+    const METHOD: &'static str = "workspace/diagnostic/refresh";
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -353,6 +368,7 @@ mod test {
         check_macro!("workspace/didCreateFiles");
         check_macro!("workspace/didRenameFiles");
         check_macro!("workspace/didDeleteFiles");
+        check_macro!("workspace/diagnostic/refresh");
     }
 
     #[test]

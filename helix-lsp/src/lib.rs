@@ -614,6 +614,7 @@ pub enum Notification {
     ShowMessage(lsp::ShowMessageParams),
     LogMessage(lsp::LogMessageParams),
     ProgressMessage(lsp::ProgressParams),
+    WorkspaceDiagnosticRefresh,
 }
 
 impl Notification {
@@ -639,6 +640,9 @@ impl Notification {
             lsp::notification::Progress::METHOD => {
                 let params: lsp::ProgressParams = params.parse()?;
                 Self::ProgressMessage(params)
+            }
+            lsp::notification::WorkspaceDiagnosticRefresh::METHOD => {
+                Self::WorkspaceDiagnosticRefresh
             }
             _ => {
                 return Err(Error::Unhandled);
