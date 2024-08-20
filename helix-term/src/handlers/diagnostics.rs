@@ -114,7 +114,10 @@ impl helix_event::AsyncHook for PullDiagnosticsHandler {
     }
 }
 
-fn pull_diagnostics_for_document(doc: &helix_view::Document, language_server: &helix_lsp::Client) {
+pub fn pull_diagnostics_for_document(
+    doc: &helix_view::Document,
+    language_server: &helix_lsp::Client,
+) {
     let Some(future) = language_server
         .text_document_diagnostic(doc.identifier(), doc.previous_diagnostic_id.clone())
     else {

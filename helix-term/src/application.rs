@@ -703,6 +703,15 @@ impl Application {
                 };
 
                 match notification {
+                    Notification::WorkspaceDiagnosticRefresh => {
+                        for document in self.editor.documents() {
+                            let langugage_server = language_server!();
+                            handlers::diagnostics::pull_diagnostics_for_document(
+                                document,
+                                langugage_server,
+                            );
+                        }
+                    }
                     Notification::Initialized => {
                         let language_server = language_server!();
 

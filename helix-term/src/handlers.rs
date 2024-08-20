@@ -16,7 +16,7 @@ pub use helix_view::handlers::Handlers;
 
 mod auto_save;
 pub mod completion;
-mod diagnostics;
+pub mod diagnostics;
 mod signature_help;
 
 pub fn setup(config: Arc<ArcSwap<Config>>) -> Handlers {

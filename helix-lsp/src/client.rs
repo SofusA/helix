@@ -571,6 +571,9 @@ impl Client {
                         did_rename: Some(true),
                         ..Default::default()
                     }),
+                    diagnostic: Some(lsp::DiagnosticWorkspaceClientCapabilities {
+                        refresh_support: Some(true),
+                    }),
                     ..Default::default()
                 }),
                 text_document: Some(lsp::TextDocumentClientCapabilities {
