@@ -1236,7 +1236,7 @@ impl Client {
         text_document: lsp::TextDocumentIdentifier,
         previous_result_id: Option<String>,
     ) -> Option<impl Future<Output = Result<Value>>> {
-        let capabilities = self.capabilities.get().unwrap();
+        let capabilities = self.capabilities();
 
         // Return early if the server does not support pull diagnostic.
         let identifier = match capabilities.diagnostic_provider.as_ref()? {
