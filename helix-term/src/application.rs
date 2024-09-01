@@ -703,15 +703,6 @@ impl Application {
                 };
 
                 match notification {
-                    Notification::WorkspaceDiagnosticRefresh => {
-                        for document in self.editor.documents() {
-                            let langugage_server = language_server!();
-                            handlers::diagnostics::pull_diagnostics_for_document(
-                                document,
-                                langugage_server,
-                            );
-                        }
-                    }
                     Notification::Initialized => {
                         let language_server = language_server!();
 
@@ -744,7 +735,10 @@ impl Application {
                                 language_id,
                             ));
 
-                            helix_event::dispatch(helix_view::events::DocumentDidOpen { doc });
+                            handlers::diagnostics::pull_diagnostics_for_document(
+                                doc,
+                                language_server,
+                            );
                         }
                     }
                     Notification::PublishDiagnostics(params) => {
@@ -1039,6 +1033,18 @@ impl Application {
 
                         let result = self.handle_show_document(params, offset_encoding);
                         Ok(json!(result))
+                    }
+
+                    Ok(MethodCall::WorkspaceDiagnosticRefresh) => {
+                        log::warn!("Sofus refresh");
+                        for document in self.editor.documents() {
+                            let language_server = language_server!();
+                            handlers::diagnostics::pull_diagnostics_for_document(
+                                document,
+                                language_server,
+                            );
+                        }
+                        Ok(serde_json::Value::Null)
                     }
                 };
 

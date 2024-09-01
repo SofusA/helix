@@ -566,6 +566,7 @@ pub enum MethodCall {
     RegisterCapability(lsp::RegistrationParams),
     UnregisterCapability(lsp::UnregistrationParams),
     ShowDocument(lsp::ShowDocumentParams),
+    WorkspaceDiagnosticRefresh,
 }
 
 impl MethodCall {
@@ -596,6 +597,7 @@ impl MethodCall {
                 let params: lsp::ShowDocumentParams = params.parse()?;
                 Self::ShowDocument(params)
             }
+            lsp::request::WorkspaceDiagnosticRefresh::METHOD => Self::WorkspaceDiagnosticRefresh,
             _ => {
                 return Err(Error::Unhandled);
             }
@@ -614,7 +616,6 @@ pub enum Notification {
     ShowMessage(lsp::ShowMessageParams),
     LogMessage(lsp::LogMessageParams),
     ProgressMessage(lsp::ProgressParams),
-    WorkspaceDiagnosticRefresh,
 }
 
 impl Notification {
@@ -641,7 +642,6 @@ impl Notification {
                 let params: lsp::ProgressParams = params.parse()?;
                 Self::ProgressMessage(params)
             }
-            lsp::request::WorkspaceDiagnosticRefresh::METHOD => Self::WorkspaceDiagnosticRefresh,
             _ => {
                 return Err(Error::Unhandled);
             }
