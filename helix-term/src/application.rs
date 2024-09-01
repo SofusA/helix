@@ -1036,7 +1036,6 @@ impl Application {
                     }
 
                     Ok(MethodCall::WorkspaceDiagnosticRefresh) => {
-                        log::warn!("Sofus refresh");
                         for document in self.editor.documents() {
                             let language_server = language_server!();
                             handlers::diagnostics::pull_diagnostics_for_document(

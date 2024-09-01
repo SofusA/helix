@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use helix_core::syntax::LanguageServerFeature;
@@ -71,12 +71,14 @@ pub(super) fn register_hooks(handlers: &Handlers) {
 
 #[derive(Debug)]
 pub(super) struct PullDiagnosticsHandler {
-    document_id: Option<DocumentId>,
+    document_ids: HashSet<DocumentId>,
 }
 
 impl PullDiagnosticsHandler {
     pub fn new() -> PullDiagnosticsHandler {
-        PullDiagnosticsHandler { document_id: None }
+        PullDiagnosticsHandler {
+            document_ids: [].into(),
+        }
     }
 }
 
@@ -88,29 +90,26 @@ impl helix_event::AsyncHook for PullDiagnosticsHandler {
         event: Self::Event,
         _: Option<tokio::time::Instant>,
     ) -> Option<tokio::time::Instant> {
-        self.document_id = Some(event.document_id);
+        self.document_ids.insert(event.document_id);
         Some(Instant::now() + Duration::from_millis(120))
     }
 
     fn finish_debounce(&mut self) {
-        let document_id = self.document_id;
-        job::dispatch_blocking(move |editor, _| {
-            let Some(document_id) = document_id else {
-                return;
-            };
+        for document_id in self.document_ids.clone() {
+            job::dispatch_blocking(move |editor, _| {
+                let doc = editor.document(document_id);
+                let Some(doc) = doc else {
+                    return;
+                };
 
-            let doc = editor.document(document_id);
-            let Some(doc) = doc else {
-                return;
-            };
+                let language_servers =
+                    doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
 
-            let language_servers =
-                doc.language_servers_with_feature(LanguageServerFeature::PullDiagnostics);
-
-            for language_server in language_servers {
-                pull_diagnostics_for_document(doc, language_server);
-            }
-        })
+                for language_server in language_servers {
+                    pull_diagnostics_for_document(doc, language_server);
+                }
+            })
+        }
     }
 }
 
