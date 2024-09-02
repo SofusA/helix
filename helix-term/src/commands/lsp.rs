@@ -536,6 +536,61 @@ pub fn diagnostics_picker(cx: &mut Context) {
 }
 
 pub fn workspace_diagnostics_picker(cx: &mut Context) {
+    // send workspace diagnostics request
+
+    log::warn!("Starting workspace diagnostics request");
+    let test: Vec<_> = cx
+        .editor
+        .language_servers
+        .iter_clients()
+        .filter(|x| {
+            x.supports_feature(helix_core::syntax::LanguageServerFeature::WorkspaceDiagnostics)
+        })
+        .collect();
+
+    for language_server in test {
+        log::error!("Sending workspace diagnostics request");
+        let Some(future) = language_server.workspace_diagnostic(&[]) else {
+            return;
+        };
+        tokio::spawn(async move {
+            match future.await {
+                Ok(res) => {
+                    crate::job::dispatch(move |_editor, _| {
+                        log::error!("got response: {}", res);
+
+                        let parsed_response: Option<lsp::WorkspaceDiagnosticReport> =
+                            match serde_json::from_value(res) {
+                                Ok(result) => Some(result),
+                                Err(_) => None,
+                            };
+
+                        log::error!("parsed response: {:?}", parsed_response);
+
+                        let Some(response) = parsed_response else {
+                            return;
+                        };
+
+                        log::error!("actual response: {:?}", response);
+
+                        for item in response.items {
+                            match item {
+                                lsp::WorkspaceDocumentDiagnosticReport::Full(full) => {
+                                    log::error!("full: {}", full.uri)
+                                }
+                                lsp::WorkspaceDocumentDiagnosticReport::Unchanged(unchanged) => {
+                                    log::error!("unchanged: {}", unchanged.uri)
+                                }
+                            }
+                        }
+                    })
+                    .await
+                }
+                Err(err) => log::error!("signature help request failed: {err}"),
+            }
+        });
+    }
+
     // TODO not yet filtered by LanguageServerFeature, need to do something similar as Document::shown_diagnostics here for all open documents
     let diagnostics = cx.editor.diagnostics.clone();
     let picker = diag_picker(cx, diagnostics, DiagnosticsFormat::ShowSourcePath);

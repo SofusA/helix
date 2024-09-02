@@ -346,6 +346,13 @@ impl Client {
             ),
             LanguageServerFeature::Diagnostics => true, // there's no extra server capability
             LanguageServerFeature::PullDiagnostics => capabilities.diagnostic_provider.is_some(),
+            LanguageServerFeature::WorkspaceDiagnostics => {
+                matches!(
+                    &capabilities.diagnostic_provider,
+                        Some(DiagnosticServerCapabilities::Options(options)) if options.workspace_diagnostics
+                )
+            }
+
             LanguageServerFeature::RenameSymbol => matches!(
                 capabilities.rename_provider,
                 Some(OneOf::Left(true)) | Some(OneOf::Right(_))
@@ -1255,6 +1262,29 @@ impl Client {
         };
 
         Some(self.call::<lsp::request::DocumentDiagnosticRequest>(params))
+    }
+
+    pub fn workspace_diagnostic(
+        &self,
+        previous_result_ids: &[lsp::PreviousResultId],
+    ) -> Option<impl Future<Output = Result<Value>>> {
+        let capabilities = self.capabilities.get().unwrap();
+
+        let identifier = match capabilities.diagnostic_provider.as_ref()? {
+            lsp::DiagnosticServerCapabilities::Options(cap) => cap.identifier.clone(),
+            lsp::DiagnosticServerCapabilities::RegistrationOptions(cap) => {
+                cap.diagnostic_options.identifier.clone()
+            }
+        };
+
+        let params = lsp::WorkspaceDiagnosticParams {
+            identifier,
+            previous_result_ids: previous_result_ids.into(),
+            work_done_progress_params: lsp::WorkDoneProgressParams::default(),
+            partial_result_params: lsp::PartialResultParams::default(),
+        };
+
+        Some(self.call::<lsp::request::WorkspaceDiagnosticRequest>(params))
     }
 
     pub fn text_document_document_highlight(
